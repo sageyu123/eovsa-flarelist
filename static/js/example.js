@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const endDate = new Date();
     const startDate = new Date();
     // startDate.setMonth(startDate.getMonth() - 1);
-    startDate.setDate(startDate.getDate() - 14);
+    startDate.setDate(startDate.getDate() - 30);
 
     // Initialize the start datetime picker
     flatpickr(document.getElementById('start'), {
