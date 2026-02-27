@@ -21,6 +21,19 @@ def check_url_exists(url):
 
 
 example = Blueprint('example', __name__, template_folder='templates')
+VALIDATE_QUERY_LINKS = os.getenv('FLARE_VALIDATE_QUERY_LINKS', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _is_nonempty(value):
+    return value not in (None, '', 'None', 'nan')
+
+
+def _build_icon_link(url, icon_url, alt):
+    return f'<div style="text-align: center;"><a href="{url}"><img src="{icon_url}" alt="{alt}" style="width:20px;height:20px;"></a></div>'
+
+
+def _jd_to_isot_seconds(jd_value):
+    return Time(float(jd_value), format='jd').isot.split('.')[0]
 
 
 def get_eo_flare_list_MySQL(start_utc, end_utc):
@@ -34,69 +47,23 @@ def get_eo_flare_list_MySQL(start_utc, end_utc):
         password=os.getenv('FLARE_DB_PASSWORD')
     )
 
-    cursor = connection.cursor()
-
-    # cursor.execute("SHOW COLUMNS FROM EOVSA_flare_list_wiki_tb")
-    # columns = cursor.fetchall()
-    # for column in columns:
-    #     print(column)
-
-    cursor.execute("SELECT Flare_ID FROM EOVSA_flare_list_wiki_tb")
-    flare_id = cursor.fetchall()
-
-    cursor.execute("SELECT Flare_class FROM EOVSA_flare_list_wiki_tb")
-    GOES_class = cursor.fetchall()
-
-    cursor.execute("SELECT EO_tstart FROM EOVSA_flare_list_wiki_tb")
-    EO_tstart = np.array(cursor.fetchall())  ##in Julian Dates i.e., Time('2019-04-15 19:30:04').jd
-
-    cursor.execute("SELECT EO_tpeak FROM EOVSA_flare_list_wiki_tb")
-    EO_tpeak = np.array(cursor.fetchall())  ##in Julian Dates i.e., Time('2019-04-15 19:30:04').jd
-
-    cursor.execute("SELECT EO_tend FROM EOVSA_flare_list_wiki_tb")
-    EO_tend = np.array(cursor.fetchall())
-
-    cursor.execute("SELECT depec_imgfile_TP FROM EOVSA_flare_list_wiki_tb")
-    depec_imgfile_TP1 = cursor.fetchall()
-    depec_imgfile_TP = [item[0] for item in depec_imgfile_TP1]
-
-    cursor.execute("SELECT depec_datafile_TP FROM EOVSA_flare_list_wiki_tb")
-    depec_datafile_TP1 = cursor.fetchall()
-    depec_datafile_TP = [item[0] for item in depec_datafile_TP1]
-
-    cursor.execute("SELECT depec_imgfile_XP FROM EOVSA_flare_list_wiki_tb")
-    depec_imgfile_XP1 = cursor.fetchall()
-    depec_imgfile_XP = [item[0] for item in depec_imgfile_XP1]
-
-    cursor.execute("SELECT depec_datafile_XP FROM EOVSA_flare_list_wiki_tb")
-    depec_datafile_XP1 = cursor.fetchall()
-    depec_datafile_XP = [item[0] for item in depec_datafile_XP1]
-
-    # cursor.execute("SELECT EO_xcen FROM EOVSA_flare_list_wiki_tb")
-    # EO_xcen = cursor.fetchall()
-
-    cursor.execute("SELECT Fpk_XP_3GHz FROM EOVSA_flare_list_wiki_tb")
-    Fpk_XP_3GHz = cursor.fetchall()
-
-    cursor.execute("SELECT Fpk_XP_7GHz FROM EOVSA_flare_list_wiki_tb")
-    Fpk_XP_7GHz = cursor.fetchall()
-
-    cursor.execute("SELECT Fpk_XP_11GHz FROM EOVSA_flare_list_wiki_tb")
-    Fpk_XP_11GHz = cursor.fetchall()
-
-    cursor.execute("SELECT Fpk_XP_15GHz FROM EOVSA_flare_list_wiki_tb")
-    Fpk_XP_15GHz = cursor.fetchall()
-
-    cursor.close()
-    connection.close()
-
     t_st = Time(start_utc).jd
     t_ed = Time(end_utc).jd
-
-    ind = np.where((EO_tstart <= t_ed) & (t_st <= EO_tend))[0]
-
-    ind_sorted = ind[np.argsort(EO_tstart[ind].flatten())]
-    ind = ind_sorted
+    cursor = connection.cursor()
+    cursor.execute(
+        """
+        SELECT Flare_ID, Flare_class, EO_tstart, EO_tpeak, EO_tend,
+               depec_imgfile_TP, depec_datafile_TP, depec_imgfile_XP, depec_datafile_XP,
+               Fpk_XP_3GHz, Fpk_XP_11GHz
+        FROM EOVSA_flare_list_wiki_tb
+        WHERE EO_tstart <= %s AND %s <= EO_tend
+        ORDER BY EO_tstart
+        """,
+        (t_ed, t_st),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    connection.close()
 
     result = []
     keys = ['_id', 'start', 'end', 'link']
@@ -105,57 +72,58 @@ def get_eo_flare_list_MySQL(start_utc, end_utc):
     ql_symbol_url = url_for('static', filename='images/ql.svg')
     dl_symbol_url = url_for('static', filename='images/dl.svg')
 
-    if ind.size > 0:
-        for i, j in enumerate(ind):
-            flare_id_str = str(flare_id[j][0])
+    if rows:
+        for i, row in enumerate(rows):
+            (
+                flare_id_val, goes_class, eo_tstart, eo_tpeak, eo_tend,
+                img_tp, data_tp, img_xp, data_xp, fpk_3, fpk_11
+            ) = row
+            flare_id_str = str(flare_id_val)
 
-            link_dspec_str_TP = f'https://www.ovsa.njit.edu/wiki/index.php/File:' + depec_imgfile_TP[j]
-            link_dspec_data_str_TP = f'https://ovsa.njit.edu/events/{flare_id_str[0:4]}/' + depec_datafile_TP[j]
-            link_dspec_str_XP = f'https://www.ovsa.njit.edu/wiki/index.php/File:' + depec_imgfile_XP[j]
-            link_dspec_data_str_XP = f'https://ovsa.njit.edu/events/{flare_id_str[0:4]}/' + depec_datafile_XP[j]
+            link_dspec_str_TP = f'https://www.ovsa.njit.edu/wiki/index.php/File:{img_tp}' if _is_nonempty(img_tp) else None
+            link_dspec_data_str_TP = f'https://ovsa.njit.edu/events/{flare_id_str[0:4]}/{data_tp}' if _is_nonempty(data_tp) else None
+            link_dspec_str_XP = f'https://www.ovsa.njit.edu/wiki/index.php/File:{img_xp}' if _is_nonempty(img_xp) else None
+            link_dspec_data_str_XP = f'https://ovsa.njit.edu/events/{flare_id_str[0:4]}/{data_xp}' if _is_nonempty(data_xp) else None
 
             link_movie_str = f'https://www.ovsa.njit.edu/SynopticImg/eovsamedia/eovsa-browser/{flare_id_str[0:4]}/{flare_id_str[4:6]}/{flare_id_str[6:8]}/eovsa.lev1_mbd_12s.flare_id_{flare_id_str}.mp4'
             link_fits_str = f'https://www.ovsa.njit.edu/fits/flares/{flare_id_str[0:4]}/{flare_id_str[4:6]}/{flare_id_str[6:8]}/{flare_id_str}/'
 
-            # if EO_xcen[j][0]:  # If link_movie_str is non-empty or meets your criteria
-            #     link_movie = f'<a href="{link_movie_str}"><img src="{ql_symbol_url}" alt="QL_Movie" style="width:20px;height:20px;"></a>'
-            #     link_fits = '<a href="'+link_fits_str+'"><img src="'+dl_symbol_url+'" alt="FITS" style="width:20px;height:20px;"></a>'
-
-            link_dspec_TP = None  # Default to None
+            link_dspec_TP = None
             link_dspec_data_TP = None
-            if check_url_exists(link_dspec_str_TP):
-                link_dspec_TP = f'<div style="text-align: center;"><a href="{link_dspec_str_TP}"><img src="{ql_symbol_url}" alt="DSpec" style="width:20px;height:20px;"></a></div>'
-                link_dspec_data_TP = f'<div style="text-align: center;"><a href="{link_dspec_data_str_TP}"><img src="{dl_symbol_url}" alt="DSpec_Data" style="width:20px;height:20px;"></a></div>'
+            if link_dspec_str_TP and link_dspec_data_str_TP:
+                if (not VALIDATE_QUERY_LINKS) or check_url_exists(link_dspec_str_TP):
+                    link_dspec_TP = _build_icon_link(link_dspec_str_TP, ql_symbol_url, "DSpec")
+                    link_dspec_data_TP = _build_icon_link(link_dspec_data_str_TP, dl_symbol_url, "DSpec_Data")
 
-            link_dspec_XP = None  # Default to None
+            link_dspec_XP = None
             link_dspec_data_XP = None
-            if check_url_exists(link_dspec_str_XP):
-                link_dspec_XP = f'<div style="text-align: center;"><a href="{link_dspec_str_XP}"><img src="{ql_symbol_url}" alt="DSpec" style="width:20px;height:20px;"></a></div>'
-                link_dspec_data_XP = f'<div style="text-align: center;"><a href="{link_dspec_data_str_XP}"><img src="{dl_symbol_url}" alt="DSpec_Data" style="width:20px;height:20px;"></a></div>'
+            if link_dspec_str_XP and link_dspec_data_str_XP:
+                if (not VALIDATE_QUERY_LINKS) or check_url_exists(link_dspec_str_XP):
+                    link_dspec_XP = _build_icon_link(link_dspec_str_XP, ql_symbol_url, "DSpec")
+                    link_dspec_data_XP = _build_icon_link(link_dspec_data_str_XP, dl_symbol_url, "DSpec_Data")
 
-            link_movie = None  # Default to None
+            link_movie = None
             link_fits = None
-            if check_url_exists(link_movie_str):
-                link_movie = f'<div style="text-align: center;"><a href="{link_movie_str}"><img src="{ql_symbol_url}" alt="QL_Movie" style="width:20px;height:20px;"></a></div>'
-                link_fits = f'<div style="text-align: center;"><a href="{link_fits_str}"><img src="{dl_symbol_url}" alt="FITS" style="width:20px;height:20px;"></a></div>'
+            if (not VALIDATE_QUERY_LINKS) or check_url_exists(link_movie_str):
+                link_movie = _build_icon_link(link_movie_str, ql_symbol_url, "QL_Movie")
+                link_fits = _build_icon_link(link_fits_str, dl_symbol_url, "FITS")
 
-            result.append({'_id': i + 1,
-                           'flare_id': int(flare_id[j][0]),
-                           'start': Time(EO_tstart[j], format='jd').isot[0].split('.')[0],
-                           'peak': Time(EO_tpeak[j], format='jd').isot[0].split('.')[0],
-                           'end': Time(EO_tend[j], format='jd').isot[0].split('.')[0],
-                           'GOES_class': GOES_class[j][0],
-                           'Fpk_XP_3GHz': f'<div style="text-align: center;">{Fpk_XP_3GHz[j][0]}</div>',
-                           # 'Fpk_XP_7GHz': f'<div style="text-align: center;">{Fpk_XP_7GHz[j][0]}</div>',
-                           'Fpk_XP_11GHz': f'<div style="text-align: center;">{Fpk_XP_11GHz[j][0]}</div>',
-                           # 'Fpk_XP_15GHz': f'<div style="text-align: center;">{Fpk_XP_15GHz[j][0]}</div>',
-                           'link_dspec_TP': link_dspec_TP,
-                           'link_dspec_data_TP': link_dspec_data_TP,
-                           'link_dspec_XP': link_dspec_XP,
-                           'link_dspec_data_XP': link_dspec_data_XP,
-                           'link_movie': link_movie,
-                           'link_fits': link_fits
-                           })
+            result.append({
+                '_id': i + 1,
+                'flare_id': int(flare_id_val),
+                'start': _jd_to_isot_seconds(eo_tstart),
+                'peak': _jd_to_isot_seconds(eo_tpeak),
+                'end': _jd_to_isot_seconds(eo_tend),
+                'GOES_class': goes_class,
+                'Fpk_XP_3GHz': f'<div style="text-align: center;">{fpk_3}</div>',
+                'Fpk_XP_11GHz': f'<div style="text-align: center;">{fpk_11}</div>',
+                'link_dspec_TP': link_dspec_TP,
+                'link_dspec_data_TP': link_dspec_data_TP,
+                'link_dspec_XP': link_dspec_XP,
+                'link_dspec_data_XP': link_dspec_data_XP,
+                'link_movie': link_movie,
+                'link_fits': link_fits
+            })
     return result
 
 
