@@ -50,18 +50,30 @@ def get_eo_flare_list_MySQL(start_utc, end_utc):
     t_st = Time(start_utc).jd
     t_ed = Time(end_utc).jd
     cursor = connection.cursor()
-    cursor.execute(
-        """
+    query_with_flags = """
+        SELECT Flare_ID, Flare_class, EO_tstart, EO_tpeak, EO_tend,
+               depec_imgfile_TP, depec_datafile_TP, depec_imgfile_XP, depec_datafile_XP,
+               Fpk_XP_3GHz, Fpk_XP_11GHz, has_ql_movie, has_fits
+        FROM EOVSA_flare_list_wiki_tb
+        WHERE EO_tstart <= %s AND %s <= EO_tend
+        ORDER BY EO_tstart
+    """
+    query_without_flags = """
         SELECT Flare_ID, Flare_class, EO_tstart, EO_tpeak, EO_tend,
                depec_imgfile_TP, depec_datafile_TP, depec_imgfile_XP, depec_datafile_XP,
                Fpk_XP_3GHz, Fpk_XP_11GHz
         FROM EOVSA_flare_list_wiki_tb
         WHERE EO_tstart <= %s AND %s <= EO_tend
         ORDER BY EO_tstart
-        """,
-        (t_ed, t_st),
-    )
-    rows = cursor.fetchall()
+    """
+    has_link_flags = True
+    try:
+        cursor.execute(query_with_flags, (t_ed, t_st))
+        rows = cursor.fetchall()
+    except mysql.connector.Error:
+        has_link_flags = False
+        cursor.execute(query_without_flags, (t_ed, t_st))
+        rows = cursor.fetchall()
     cursor.close()
     connection.close()
 
@@ -76,9 +88,11 @@ def get_eo_flare_list_MySQL(start_utc, end_utc):
         for i, row in enumerate(rows):
             (
                 flare_id_val, goes_class, eo_tstart, eo_tpeak, eo_tend,
-                img_tp, data_tp, img_xp, data_xp, fpk_3, fpk_11
+                img_tp, data_tp, img_xp, data_xp, fpk_3, fpk_11, *link_flags
             ) = row
             flare_id_str = str(flare_id_val)
+            has_ql_movie = int(link_flags[0]) if has_link_flags and link_flags else 0
+            has_fits = int(link_flags[1]) if has_link_flags and len(link_flags) > 1 else 0
 
             link_dspec_str_TP = f'https://www.ovsa.njit.edu/wiki/index.php/File:{img_tp}' if _is_nonempty(img_tp) else None
             link_dspec_data_str_TP = f'https://ovsa.njit.edu/events/{flare_id_str[0:4]}/{data_tp}' if _is_nonempty(data_tp) else None
@@ -104,7 +118,12 @@ def get_eo_flare_list_MySQL(start_utc, end_utc):
 
             link_movie = None
             link_fits = None
-            if (not VALIDATE_QUERY_LINKS) or check_url_exists(link_movie_str):
+            if has_link_flags:
+                if has_ql_movie:
+                    link_movie = _build_icon_link(link_movie_str, ql_symbol_url, "QL_Movie")
+                if has_fits:
+                    link_fits = _build_icon_link(link_fits_str, dl_symbol_url, "FITS")
+            elif (not VALIDATE_QUERY_LINKS) or check_url_exists(link_movie_str):
                 link_movie = _build_icon_link(link_movie_str, ql_symbol_url, "QL_Movie")
                 link_fits = _build_icon_link(link_fits_str, dl_symbol_url, "FITS")
 
